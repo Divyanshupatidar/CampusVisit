@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>University Campus - Open World Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+        }
+        #gameCanvas {
+            display: block;
+            background: #4a7c59;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            border: 2px solid #ffd700;
+        }
+        #minimap {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            width: 180px;
+            height: 180px;
+            background: rgba(0,0,0,0.8);
+            border: 3px solid #ffd700;
+            border-radius: 8px;
+        }
+        #missionBox {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.9);
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            max-width: 280px;
+            font-size: 12px;
+            border: 2px solid #ff6b6b;
+        }
+        .stat {
+            margin: 5px 0;
+        }
+        .stat-label {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        .mission-title {
+            color: #ff6b6b;
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        #interactionPrompt {
+            position: absolute;
+            bottom: 200px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 215, 0, 0.95);
+            color: #000;
+            padding: 12px 25px;
+            border-radius: 8px;
+            display: none;
+            animation: bounce 0.5s infinite alternate;
+            font-weight: bold;
+            border: 2px solid #fff;
+        }
+        @keyframes bounce {
+            from { transform: translateX(-50%) translateY(0); }
+            to { transform: translateX(-50%) translateY(-8px); }
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 11px;
+            border: 2px solid #3498db;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="900" height="700"></canvas>
+        <div id="ui">
+            <div id="hud">
+                <div class="stat"><span class="stat-label">⭐ Reputation:</span> <span id="reputation">0</span></div>
+                <div class="stat"><span class="stat-label">📋 Missions:</span> <span id="missionCount">0</span></div>
+                <div class="stat"><span class="stat-label">⚠️ Warnings:</span> <span id="warnings">0</span></div>
+            </div>
+            <div id="missionBox" style="display: none;">
+                <div class="mission-title" id="missionTitle">No Active Mission</div>
+                <div id="missionDescription"></div>
+            </div>
+            <canvas id="minimap" width="180" height="180"></canvas>
+            <div id="interactionPrompt">Press E to interact</div>
+            <div id="controls">
+                ⌨️ WASD/Arrows: Move | E: Interact<br>
+                🎯 Follow gold stars to complete missions
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // GAME CONFIGURATION & INITIALIZATION
+        // ============================================
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const minimap = document.getElementById('minimap');
+        const minimapCtx = minimap.getContext('2d');
+
+        // Game state management
+        const game = {
+            width: 3000,
+            height: 3000,
+            tileSize: 40,
+            reputation: 0,
+            missionsCompleted: 0,
+            warnings: 0,
+            activeMission: null,
+            keys: {},
+            camera: { x: 0, y: 0 }
+        };
+
+        // ============================================
+        // CUSTOM CAMPUS MAP LAYOUT
+        // ============================================
+        const buildings = [
+            // Main Gate Area (bottom entrance)
+            { x: 1400, y: 2700, width: 200, height: 80, name: 'Main Gate', color: '#7f8c8d', type: 'gate' },
+            
+            // PU Circle (fountain center) - slightly above gate
+            { x: 1450, y: 2400, width: 100, height: 100, name: 'PU Circle', color: '#3498db', type: 'fountain' },
+            
+            // Left side of PU Circle
+            { x: 900, y: 2300, width: 280, height: 200, name: 'A-Block', color: '#c0392b', type: 'academic' },
+            { x: 900, y: 2050, width: 200, height: 180, name: 'O-Block', color: '#d35400', type: 'academic' },
+            { x: 650, y: 2300, width: 220, height: 200, name: 'Admin Office', color: '#f5deb3', type: 'admin' },
+            
+            // Right side of PU Circle
+            { x: 1650, y: 2300, width: 400, height: 150, name: 'New Food Court', color: '#e67e22', type: 'food' },
+            
+            // Above PU Circle
+            { x: 1350, y: 2000, width: 300, height: 180, name: 'Canteen', color: '#c0392b', type: 'food' },
+            
+            // Left road from Canteen
+            { x: 650, y: 1900, width: 180, height: 180, name: 'Mandir', color: '#ff9a76', type: 'temple' },
+            
+            // Greenzy (forest zone) - left of temple
+            { x: 400, y: 1400, width: 350, height: 400, name: 'Greenzy', color: '#27ae60', type: 'park' },
+            
+            // Kathi Junction (central crossroad)
+            { x: 1400, y: 1600, width: 120, height: 120, name: 'Kathi Junction', color: '#e67e22', type: 'food' },
+            
+            // Top left area
+            { x: 400, y: 400, width: 450, height: 350, name: 'CV Raman', color: '#c0392b', type: 'academic' },
+            { x: 900, y: 400, width: 400, height: 350, name: 'N-Block', color: '#d35400', type: 'academic' },
+            
+            // Right from Kathi Junction
+            { x: 1800, y: 1500, width: 300, height: 300, name: 'Capital', color: '#f39c12', type: 'food' }
+        ];
+
+        // Road system
+        const roads = [
+            // Main vertical road from gate to top
+            { x: 1350, y: 0, width: 200, height: 3000 },
+            // Horizontal road at PU Circle level
+            { x: 0, y: 2350, width: 3000, height: 150 },
+            // Horizontal road at Kathi Junction level
+            { x: 0, y: 1600, width: 3000, height: 120 },
+            // Left vertical road to Greenzy
+            { x: 550, y: 0, width: 150, height: 2500 },
+            // Road to Capital
+            { x: 1550, y: 1600, width: 700, height: 120 }
+        ];
+
+        // Decorative elements
+        const decorations = [
+            // Trees around Greenzy
+            { x: 420, y: 1420, size: 60, type: 'tree' },
+            { x: 520, y: 1500, size: 50, type: 'tree' },
+            { x: 650, y: 1450, size: 55, type: 'tree' },
+            { x: 450, y: 1650, size: 60, type: 'tree' },
+            { x: 600, y: 1700, size: 50, type: 'tree' },
+            { x: 700, y: 1600, size: 55, type: 'tree' },
+            // Trees around Capital
+            { x: 1820, y: 1520, size: 40, type: 'tree' },
+            { x: 2050, y: 1540, size: 45, type: 'tree' },
+            { x: 1850, y: 1750, size: 40, type: 'tree' },
+            { x: 2030, y: 1760, size: 42, type: 'tree' },
+            // Trees scattered around campus
+            { x: 1200, y: 800, size: 45, type: 'tree' },
+            { x: 1700, y: 900, size: 40, type: 'tree' },
+            { x: 800, y: 1200, size: 50, type: 'tree' }
+        ];
+
+        // ============================================
+        // PLAYER CLASS - Character movement & collision
+        // ============================================
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.width = 32;
+                this.height = 32;
+                this.speed = 4;
+                this.direction = 'down';
+            }
+
+            move() {
+                const prevX = this.x;
+                const prevY = this.y;
+
+                if (game.keys['w'] || game.keys['ArrowUp']) {
+                    this.y -= this.speed;
+                    this.direction = 'up';
+                }
+                if (game.keys['s'] || game.keys['ArrowDown']) {
+                    this.y += this.speed;
+                    this.direction = 'down';
+                }
+                if (game.keys['a'] || game.keys['ArrowLeft']) {
+                    this.x -= this.speed;
+                    this.direction = 'left';
+                }
+                if (game.keys['d'] || game.keys['ArrowRight']) {
+                    this.x += this.speed;
+                    this.direction = 'right';
+                }
+
+                // Boundary collision
+                this.x = Math.max(0, Math.min(game.width - this.width, this.x));
+                this.y = Math.max(0, Math.min(game.height - this.height, this.y));
+
+                // Building collision
+                if (this.checkBuildingCollision()) {
+                    this.x = prevX;
+                    this.y = prevY;
+                }
+            }
+
+            checkBuildingCollision() {
+                for (let building of buildings) {
+                    // Skip fountain and gate for collision
+                    if (building.type === 'fountain' || building.type === 'gate') continue;
+                    
+                    if (this.x < building.x + building.width &&
+                        this.x + this.width > building.x &&
+                        this.y < building.y + building.height &&
+                        this.y + this.height > building.y) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            draw() {
+                ctx.save();
+                
+                // Body
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(this.x - game.camera.x, this.y - game.camera.y, this.width, this.height);
+                
+                // Head
+                ctx.fillStyle = '#f39c12';
+                ctx.fillRect(this.x - game.camera.x + 6, this.y - game.camera.y + 4, 20, 12);
+                
+                // Backpack
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(this.x - game.camera.x + 10, this.y - game.camera.y + 18, 12, 10);
+                
+                // Eyes
+                ctx.fillStyle = '#000';
+                ctx.fillRect(this.x - game.camera.x + 10, this.y - game.camera.y + 8, 3, 3);
+                ctx.fillRect(this.x - game.camera.x + 19, this.y - game.camera.y + 8, 3, 3);
+                
+                ctx.restore();
+            }
+        }
+
+        // ============================================
+        // NPC CLASS
+        // ============================================
+        class NPC {
+            constructor(x, y, type, name) {
+                this.x = x;
+                this.y = y;
+                this.width = 30;
+                this.height = 30;
+                this.type = type;
+                this.name = name;
+                this.speed = 1.5;
+                this.direction = Math.random() * Math.PI * 2;
+                this.changeDirectionTimer = 0;
+                this.hasMission = Math.random() < 0.4;
+            }
+
+            update() {
+                this.changeDirectionTimer++;
+                if (this.changeDirectionTimer > 100) {
+                    this.direction = Math.random() * Math.PI * 2;
+                    this.changeDirectionTimer = 0;
+                }
+
+                const prevX = this.x;
+                const prevY = this.y;
+
+                this.x += Math.cos(this.direction) * this.speed;
+                this.y += Math.sin(this.direction) * this.speed;
+
+                // Boundary check
+                if (this.x < 0 || this.x > game.width - this.width ||
+                    this.y < 0 || this.y > game.height - this.height) {
+                    this.x = prevX;
+                    this.y = prevY;
+                    this.direction = Math.random() * Math.PI * 2;
+                }
+
+                // Building collision
+                for (let building of buildings) {
+                    if (building.type === 'fountain' || building.type === 'gate') continue;
+                    
+                    if (this.x < building.x + building.width &&
+                        this.x + this.width > building.x &&
+                        this.y < building.y + building.height &&
+                        this.y + this.height > building.y) {
+                        this.x = prevX;
+                        this.y = prevY;
+                        this.direction = Math.random() * Math.PI * 2;
+                    }
+                }
+            }
+
+            draw() {
+                ctx.save();
+                
+                const colors = {
+                    'student': '#9b59b6',
+                    'professor': '#2c3e50',
+                    'guard': '#c0392b',
+                    'vendor': '#e67e22'
+                };
+                
+                ctx.fillStyle = colors[this.type];
+                ctx.fillRect(this.x - game.camera.x, this.y - game.camera.y, this.width, this.height);
+                
+                // Head
+                ctx.fillStyle = '#f39c12';
+                ctx.fillRect(this.x - game.camera.x + 5, this.y - game.camera.y + 4, 20, 10);
+                
+                // Mission indicator
+                if (this.hasMission) {
+                    ctx.fillStyle = '#ffd700';
+                    ctx.beginPath();
+                    ctx.arc(
+                        this.x - game.camera.x + this.width / 2,
+                        this.y - game.camera.y - 15,
+                        8, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('!', this.x - game.camera.x + this.width / 2, this.y - game.camera.y - 11);
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // ============================================
+        // MISSION SYSTEM
+        // ============================================
+        const missionTemplates = [
+            { title: '📚 Library Visit', desc: 'Go to A-Block', target: 'A-Block', reward: 50 },
+            { title: '🍕 Food Delivery', desc: 'Go to New Food Court', target: 'New Food Court', reward: 35 },
+            { title: '🍛 Canteen Order', desc: 'Go to Canteen', target: 'Canteen', reward: 30 },
+            { title: '🏢 Admin Work', desc: 'Go to Admin Office', target: 'Admin Office', reward: 45 },
+            { title: '🔬 Lab Session', desc: 'Go to CV Raman', target: 'CV Raman', reward: 60 },
+            { title: '📖 Class Attendance', desc: 'Go to N-Block', target: 'N-Block', reward: 55 },
+            { title: '🌟 Capital Visit', desc: 'Go to Capital', target: 'Capital', reward: 40 },
+            { title: '🕉️ Temple Visit', desc: 'Go to Mandir', target: 'Mandir', reward: 25 },
+            { title: '🌳 Nature Walk', desc: 'Go to Greenzy', target: 'Greenzy', reward: 20 },
+            { title: '🥙 Kathi Roll', desc: 'Go to Kathi Junction', target: 'Kathi Junction', reward: 15 }
+        ];
+
+        function startMission(template) {
+            game.activeMission = { ...template, startTime: Date.now() };
+            updateMissionUI();
+            playSound('missionStart');
+        }
+
+        function completeMission() {
+            if (game.activeMission) {
+                game.reputation += game.activeMission.reward;
+                game.missionsCompleted++;
+                playSound('missionComplete');
+                game.activeMission = null;
+                updateMissionUI();
+                updateHUD();
+            }
+        }
+
+        function updateMissionUI() {
+            const missionBox = document.getElementById('missionBox');
+            if (game.activeMission) {
+                missionBox.style.display = 'block';
+                document.getElementById('missionTitle').textContent = game.activeMission.title;
+                document.getElementById('missionDescription').textContent = game.activeMission.desc + ' (+' + game.activeMission.reward + ' rep)';
+            } else {
+                missionBox.style.display = 'none';
+            }
+        }
+
+        // ============================================
+        // INTERACTION SYSTEM
+        // ============================================
+        function checkInteractions() {
+            const interactionPrompt = document.getElementById('interactionPrompt');
+            let canInteract = false;
+
+            // NPC interactions
+            for (let npc of npcs) {
+                const dist = Math.hypot(player.x - npc.x, player.y - npc.y);
+                if (dist < 70 && npc.hasMission && !game.activeMission) {
+                    canInteract = true;
+                    if (game.keys['e']) {
+                        const mission = missionTemplates[Math.floor(Math.random() * missionTemplates.length)];
+                        startMission(mission);
+                        npc.hasMission = false;
+                        game.keys['e'] = false;
+                    }
+                    break;
+                }
+            }
+
+            // Building interactions
+            if (game.activeMission) {
+                for (let building of buildings) {
+                    if (building.name === game.activeMission.target) {
+                        const playerCenterX = player.x + player.width / 2;
+                        const playerCenterY = player.y + player.height / 2;
+                        const buildingCenterX = building.x + building.width / 2;
+                        const buildingCenterY = building.y + building.height / 2;
+                        
+                        const dist = Math.hypot(playerCenterX - buildingCenterX, playerCenterY - buildingCenterY);
+                        const interactionRange = Math.max(building.width, building.height) / 2 + 90;
+                        
+                        if (dist < interactionRange) {
+                            canInteract = true;
+                            if (game.keys['e']) {
+                                completeMission();
+                                game.keys['e'] = false;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            interactionPrompt.style.display = canInteract ? 'block' : 'none';
+        }
+
+        // ============================================
+        // CAMERA SYSTEM
+        // ============================================
+        function updateCamera() {
+            game.camera.x = player.x - canvas.width / 2 + player.width / 2;
+            game.camera.y = player.y - canvas.height / 2 + player.height / 2;
+
+            game.camera.x = Math.max(0, Math.min(game.width - canvas.width, game.camera.x));
+            game.camera.y = Math.max(0, Math.min(game.height - canvas.height, game.camera.y));
+        }
+
+        // ============================================
+        // RENDERING SYSTEM
+        // ============================================
+        function drawWorld() {
+            // Grass background
+            ctx.fillStyle = '#4a7c59';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw roads
+            ctx.fillStyle = '#a0a0a0';
+            for (let road of roads) {
+                ctx.fillRect(
+                    road.x - game.camera.x,
+                    road.y - game.camera.y,
+                    road.width,
+                    road.height
+                );
+                
+                // Road markings
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([20, 15]);
+                if (road.width > road.height) {
+                    ctx.beginPath();
+                    ctx.moveTo(road.x - game.camera.x, road.y - game.camera.y + road.height / 2);
+                    ctx.lineTo(road.x - game.camera.x + road.width, road.y - game.camera.y + road.height / 2);
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(road.x - game.camera.x + road.width / 2, road.y - game.camera.y);
+                    ctx.lineTo(road.x - game.camera.x + road.width / 2, road.y - game.camera.y + road.height);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+
+            // Draw decorations (trees)
+            for (let deco of decorations) {
+                if (deco.type === 'tree') {
+                    // Tree shadow
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        deco.x - game.camera.x + deco.size / 2 + 3,
+                        deco.y - game.camera.y + deco.size + 3,
+                        deco.size / 2, deco.size / 4, 0, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Tree trunk
+                    ctx.fillStyle = '#654321';
+                    ctx.fillRect(
+                        deco.x - game.camera.x + deco.size / 2 - 5,
+                        deco.y - game.camera.y + deco.size / 2,
+                        10,
+                        deco.size / 2
+                    );
+                    
+                    // Tree foliage
+                    ctx.fillStyle = '#228b22';
+                    ctx.beginPath();
+                    ctx.arc(
+                        deco.x - game.camera.x + deco.size / 2,
+                        deco.y - game.camera.y + deco.size / 2,
+                        deco.size / 2, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Highlight
+                    ctx.fillStyle = '#32cd32';
+                    ctx.beginPath();
+                    ctx.arc(
+                        deco.x - game.camera.x + deco.size / 2 - 8,
+                        deco.y - game.camera.y + deco.size / 2 - 8,
+                        deco.size / 5, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawBuildings() {
+            for (let building of buildings) {
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(
+                    building.x - game.camera.x + 6,
+                    building.y - game.camera.y + 6,
+                    building.width,
+                    building.height
+                );
+
+                // Special rendering for different types
+                if (building.type === 'fountain') {
+                    // PU Circle fountain
+                    ctx.fillStyle = '#3498db';
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + building.height / 2,
+                        building.width / 2, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#ecf0f1';
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + building.height / 2,
+                        building.width / 3, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                } else if (building.type === 'temple') {
+                    // Mandir
+                    ctx.fillStyle = building.color;
+                    ctx.fillRect(
+                        building.x - game.camera.x,
+                        building.y - game.camera.y,
+                        building.width,
+                        building.height
+                    );
+                    
+                    // Dome
+                    ctx.fillStyle = '#ff7f50';
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + 30,
+                        40, Math.PI, 0
+                    );
+                    ctx.fill();
+                } else if (building.name === 'Capital') {
+                    // Capital circular food court
+                    ctx.fillStyle = building.color;
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + building.height / 2,
+                        building.width / 2, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    
+                    // Yellow glow
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + building.height / 2,
+                        building.width / 2 - 4, 0, Math.PI * 2
+                    );
+                    ctx.stroke();
+                } else {
+                    // Regular buildings
+                    ctx.fillStyle = building.color;
+                    ctx.fillRect(
+                        building.x - game.camera.x,
+                        building.y - game.camera.y,
+                        building.width,
+                        building.height
+                    );
+                }
+
+                // Border
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 3;
+                if (building.type === 'fountain' || building.name === 'Capital') {
+                    ctx.beginPath();
+                    ctx.arc(
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y + building.height / 2,
+                        building.width / 2, 0, Math.PI * 2
+                    );
+                    ctx.stroke();
+                } else {
+                    ctx.strokeRect(
+                        building.x - game.camera.x,
+                        building.y - game.camera.y,
+                        building.width,
+                        building.height
+                    );
+                }
+
+                // Building label
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 3;
+                ctx.strokeText(
+                    building.name,
+                    building.x - game.camera.x + building.width / 2,
+                    building.y - game.camera.y + building.height / 2
+                );
+                ctx.fillText(
+                    building.name,
+                    building.x - game.camera.x + building.width / 2,
+                    building.y - game.camera.y + building.height / 2
+                );
+                
+                // Mission target indicator
+                if (game.activeMission && building.name === game.activeMission.target) {
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.lineWidth = 5;
+                    ctx.setLineDash([15, 10]);
+                    
+                    if (building.type === 'fountain' || building.name === 'Capital') {
+                        ctx.beginPath();
+                        ctx.arc(
+                            building.x - game.camera.x + building.width / 2,
+                            building.y - game.camera.y + building.height / 2,
+                            building.width / 2 + 10, 0, Math.PI * 2
+                        );
+                        ctx.stroke();
+                    } else {
+                        ctx.strokeRect(
+                            building.x - game.camera.x - 10,
+                            building.y - game.camera.y - 10,
+                            building.width + 20,
+                            building.height + 20
+                        );
+                    }
+                    ctx.setLineDash([]);
+                    
+                    // Target star
+                    ctx.fillStyle = '#ffd700';
+                    ctx.font = 'bold 24px Arial';
+                    ctx.fillText(
+                        '⭐',
+                        building.x - game.camera.x + building.width / 2,
+                        building.y - game.camera.y - 20
+                    );
+                }
+            }
+        }
+
+        function drawMinimap() {
+            minimapCtx.fillStyle = '#4a7c59';
+            minimapCtx.fillRect(0, 0, 180, 180);
+
+            const scale = 180 / game.width;
+
+            // Draw roads on minimap
+            minimapCtx.fillStyle = '#a0a0a0';
+            for (let road of roads) {
+                minimapCtx.fillRect(
+                    road.x * scale,
+                    road.y * scale,
+                    road.width * scale,
+                    road.height * scale
+                );
+            }
+
+            // Draw buildings on minimap
+            for (let building of buildings) {
+                if (building.type === 'fountain') {
+                    minimapCtx.fillStyle = '#3498db';
+                } else if (building.type === 'temple') {
+                    minimapCtx.fillStyle = '#ff9a76';
+                } else if (building.name === 'Capital') {
+                    minimapCtx.fillStyle = '#ffd700';
+                } else if (building.name === 'Greenzy') {
+                    minimapCtx.fillStyle = '#27ae60';
+                } else {
+                    minimapCtx.fillStyle = building.color;
+                }
+                
+                minimapCtx.fillRect(
+                    building.x * scale,
+                    building.y * scale,
+                    building.width * scale,
+                    building.height * scale
+                );
+                
+                // Target indicator on minimap
+                if (game.activeMission && building.name === game.activeMission.target) {
+                    minimapCtx.strokeStyle = '#ffd700';
+                    minimapCtx.lineWidth = 2;
+                    minimapCtx.strokeRect(
+                        building.x * scale - 2,
+                        building.y * scale - 2,
+                        building.width * scale + 4,
+                        building.height * scale + 4
+                    );
+                }
+            }
+
+            // Draw player on minimap
+            minimapCtx.fillStyle = '#ff0000';
+            minimapCtx.fillRect(
+                player.x * scale - 3,
+                player.y * scale - 3,
+                6,
+                6
+            );
+
+            // Draw NPCs on minimap
+            minimapCtx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            for (let npc of npcs) {
+                if (npc.hasMission) {
+                    minimapCtx.fillStyle = '#ffd700';
+                    minimapCtx.fillRect(
+                        npc.x * scale - 2,
+                        npc.y * scale - 2,
+                        3,
+                        3
+                    );
+                }
+            }
+        }
+
+        function updateHUD() {
+            document.getElementById('reputation').textContent = game.reputation;
+            document.getElementById('missionCount').textContent = game.missionsCompleted;
+            document.getElementById('warnings').textContent = game.warnings;
+        }
+
+        // ============================================
+        // SOUND SYSTEM
+        // ============================================
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            switch(type) {
+                case 'missionStart':
+                    oscillator.frequency.value = 523;
+                    gainNode.gain.value = 0.15;
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.15);
+                    break;
+                case 'missionComplete':
+                    oscillator.frequency.value = 784;
+                    gainNode.gain.value = 0.15;
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.25);
+                    
+                    setTimeout(() => {
+                        const osc2 = audioContext.createOscillator();
+                        const gain2 = audioContext.createGain();
+                        osc2.connect(gain2);
+                        gain2.connect(audioContext.destination);
+                        osc2.frequency.value = 1047;
+                        gain2.gain.value = 0.15;
+                        osc2.start();
+                        osc2.stop(audioContext.currentTime + 0.25);
+                    }, 150);
+                    break;
+            }
+        }
+
+        // ============================================
+        // INPUT HANDLING
+        // ============================================
+        document.addEventListener('keydown', (e) => {
+            game.keys[e.key.toLowerCase()] = true;
+            game.keys[e.key] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            game.keys[e.key.toLowerCase()] = false;
+            game.keys[e.key] = false;
+        });
+
+        // ============================================
+        // GAME INITIALIZATION
+        // ============================================
+        const player = new Player(1500, 2650);
+        const npcs = [];
+
+        // Spawn NPCs around campus
+        const spawnAreas = [
+            { x: 1000, y: 2400, range: 150 }, // Near A-Block
+            { x: 1800, y: 2400, range: 150 }, // Near Food Court
+            { x: 1450, y: 2100, range: 100 }, // Near Canteen
+            { x: 550, y: 1600, range: 200 },  // Near Greenzy
+            { x: 650, y: 800, range: 250 },   // Near CV Raman/N-Block
+            { x: 1900, y: 1650, range: 150 }, // Near Capital
+            { x: 1400, y: 1650, range: 100 }  // Near Kathi Junction
+        ];
+
+        const npcTypes = ['student', 'student', 'student', 'student', 'professor', 'guard', 'vendor'];
+        const npcNames = [
+            'Raj', 'Priya', 'Amit', 'Sneha', 'Vikram', 'Ananya', 'Rohan', 'Kavya',
+            'Prof. Sharma', 'Prof. Gupta', 'Prof. Patel', 'Guard Singh', 'Guard Kumar',
+            'Vendor Mohan', 'Vendor Raju'
+        ];
+
+        for (let i = 0; i < 25; i++) {
+            const area = spawnAreas[Math.floor(Math.random() * spawnAreas.length)];
+            let x, y;
+            let validPosition = false;
+            let attempts = 0;
+            
+            while (!validPosition && attempts < 50) {
+                x = area.x + (Math.random() - 0.5) * area.range * 2;
+                y = area.y + (Math.random() - 0.5) * area.range * 2;
+                x = Math.max(50, Math.min(game.width - 50, x));
+                y = Math.max(50, Math.min(game.height - 50, y));
+                
+                validPosition = true;
+                
+                for (let building of buildings) {
+                    if (building.type === 'fountain' || building.type === 'gate') continue;
+                    if (x < building.x + building.width && x + 30 > building.x &&
+                        y < building.y + building.height && y + 30 > building.y) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+                attempts++;
+            }
+            
+            if (validPosition) {
+                const type = npcTypes[Math.floor(Math.random() * npcTypes.length)];
+                const name = npcNames[i % npcNames.length];
+                npcs.push(new NPC(x, y, type, name));
+            }
+        }
+
+        // ============================================
+        // MAIN GAME LOOP
+        // ============================================
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            player.move();
+            updateCamera();
+            
+            for (let npc of npcs) {
+                npc.update();
+            }
+
+            checkInteractions();
+
+            drawWorld();
+            drawBuildings();
+            
+            for (let npc of npcs) {
+                npc.draw();
+            }
+            
+            player.draw();
+            drawMinimap();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start everything
+        updateHUD();
+        gameLoop();
+    </script>
+</body>
+</html>
